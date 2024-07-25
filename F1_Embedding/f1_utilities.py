@@ -4,8 +4,16 @@ from typing import Iterable, List
 
 import numpy as np
 
+# Thanks to http://www.oldmanumby.com/ for his remaster and converion of the Dungeons
+# and Dragons 5th Edition SRD (Systems Reference Document)
+# https://github.com/OldManUmby/DND.SRD.Wiki
+
+# Thanks to Wizards of the Coast for DnD and preserving its openness with the Open Gaming License.
+
+
 def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
 
 @dataclass(frozen=True, repr=True)
 class WikipediaPath:
@@ -15,17 +23,33 @@ class WikipediaPath:
     def __str__(self):
         return f"{self.article} - {self.header}"
 
+
 @dataclass(frozen=True, repr=True)
 class Section:
+    """
+    A segment is defined by anything that follows an h1 header (# ...) or
+    an entire document if the file has no h1 headers.
+    """
+
     location: WikipediaPath
     text: str
 
     def __str__(self):
         return f"{self.location}:\n{self.text}"
 
+
 def wikipedia_splitter(
-        contents: str, article_title: str, token_limit: int, split_point_regexes: List[str]
+    contents: str, article_title: str, token_limit: int, split_point_regexes: List[str]
 ) -> Iterable[Section]:
+    # Take a markdown file and the article split on `==` sections.
+    """
+    Generate sections of Wikipedia pages.
+    :param contents: The contents of the wikipedia page
+    :param article_title: The title of the article, to be included in the emitted section object
+    :param token_limit: The maximum number of tokens to allow in a section
+    :param split_point_regexes: A list of regexes to split on. The first one is the highest precedence.
+        If we can't fit a section into the token limit, we'll split on the next lower regex.
+    """
     split_point_regex = split_point_regexes[0]
     sections = re.split(split_point_regex, contents)
 
@@ -40,6 +64,7 @@ def wikipedia_splitter(
             text=first_section,
         )
 
+    # And now proceed into splitting sections based on the `==` header
     for section in sections:
         if not section.strip():
             # Remove trailing empty sections.

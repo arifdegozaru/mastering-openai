@@ -12,7 +12,7 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_random_exponential
+    wait_random_exponential,
 )
 
 
@@ -22,15 +22,16 @@ def cosine_similarity(a, b):
 
 def get_file_with_zip_fallback(file_name: str, zip_file_name: str) -> str:
     # Check if the CSV file exists
-    if not os.path.isfile(file_name):
+    if not os.path.exists(file_name):
         # If not, check if the ZIP file exists and unzip it
-        if os.path.isfile(zip_file_name):
-            with zipfile.ZipFile(zip_file_name, 'r') as zip_ref:
+        if os.path.exists(zip_file_name):
+            with zipfile.ZipFile(zip_file_name, "r") as zip_ref:
                 zip_ref.extractall()
         else:
             raise ValueError(
                 f"Neither {file_name} nor {zip_file_name} were found in the current directory."
             )
+
     # Read the contents of the CSV file
     with open(file_name, "r", encoding="utf-8") as file:
         contents = file.read()
@@ -38,13 +39,14 @@ def get_file_with_zip_fallback(file_name: str, zip_file_name: str) -> str:
     return contents
 
 
-def num_tokens_from_messages(messages, model="gpt-3.5-turbo"):
+# Updated 1/4/2024
+def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0613"):
     """Return the number of tokens used by a list of messages."""
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
         print("Warning: model not found. Using cl100k_base encoding.")
-        encoding = tiktoken.encoding_for_model("cl100k_base")
+        encoding = tiktoken.get_encoding("cl100k_base")
     if model in {
         "gpt-3.5-turbo-0613",
         "gpt-3.5-turbo-16k-0613",
@@ -93,7 +95,7 @@ def memoize_to_sqlite(filename: str = "cache.db"):
     )
 
     def memoize(func):
-        def wrapper(*args):
+        def wrapped(*args):
             # Compute the hash of the argument
             arg_hash = hashlib.sha256(repr(tuple(args)).encode("utf-8")).hexdigest()
 
@@ -115,7 +117,7 @@ def memoize_to_sqlite(filename: str = "cache.db"):
 
             return result
 
-        return wrapper
+        return wrapped
 
     return memoize
 
@@ -123,11 +125,11 @@ def memoize_to_sqlite(filename: str = "cache.db"):
 # This is not optimized for massive reads and writes, but it's good enough for this example
 @memoize_to_sqlite(filename="embeddings.db")
 @retry(
-    wait=wait_random_exponential(multiplier=1, max=10),
-    stop=stop_after_attempt(5),
+    wait=wait_random_exponential(multiplier=1, max=30),
+    stop=stop_after_attempt(3),
     retry=retry_if_exception_type(openai.APIConnectionError)
-          | retry_if_exception_type(openai.APIError)
-          | retry_if_exception_type(openai.RateLimitError)
+    | retry_if_exception_type(openai.APIError)
+    | retry_if_exception_type(openai.RateLimitError),
 )
 def get_embedding(text: str) -> List[float]:
     """
@@ -148,10 +150,8 @@ T = TypeVar("T")  # Declare type variable
 
 
 def get_n_nearest_neighbors(
-    query_embedding: List[float],
-    embeddings: Dict[T, List[float]],
-    n: int
-) -> Tuple[List[T, float]]:
+    query_embedding: List[float], embeddings: Dict[T, List[float]], n: int
+) -> List[Tuple[T, float]]:
     """
     :param query_embedding: The embedding to find the nearest neighbors for
     :param embeddings: A dictionary of embeddings, where the keys are the entity type (e.g. Movie, Segment)
@@ -160,13 +160,29 @@ def get_n_nearest_neighbors(
     :return: A list of tuples, where the first element is the entity and the second element is the cosine
         similarity between -1 and 1
     """
+
+    # This is not optimized for rapid indexing, but it's good enough for this example
+    # If you're using this in production, you should use a more efficient vector datastore such as
+    # those mentioned specifically by OpenAI here
+    #
+    #  https://platform.openai.com/docs/guides/embeddings/how-can-i-retrieve-k-nearest-embedding-vectors-quickly
+    #
+    #  * Pinecone, a fully managed vector database
+    #  * Weaviate, an open-source vector search engine
+    #  * Redis as a vector database
+    #  * Qdrant, a vector search engine
+    #  * Milvus, a vector database built for scalable similarity search
+    #  * Chroma, an open-source embeddings store
+    #
+
     target_embedding = np.array(query_embedding)
 
     similarities = [
-        (segment.cosine_similarity(target_embedding, np.array(embedding)))
+        (segment, cosine_similarity(target_embedding, np.array(embedding)))
         for segment, embedding in embeddings.items()
     ]
 
+    # Sort by similarity and get the top n results
     nearest_neighbors = sorted(similarities, key=lambda x: x[1], reverse=True)[:n]
 
     return nearest_neighbors
